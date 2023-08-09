@@ -15,6 +15,7 @@ limitations under the License.
 
 package org.tensorflow.lite.examples.transfer.api;
 
+import android.icu.text.SimpleDateFormat;
 import android.nfc.Tag;
 import android.util.Log;
 import android.util.Pair;
@@ -27,6 +28,7 @@ import java.nio.channels.GatheringByteChannel;
 import java.nio.channels.ScatteringByteChannel;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
@@ -270,7 +272,7 @@ public final class TransferLearningModel implements Closeable {
    * @param lossConsumer callback to receive loss values, may be null.
    * @return future that is resolved when training is finished.
    */
-  public Future<Void> train(int numEpochs, LossConsumer lossConsumer) {
+  public Future<Void> train(int numEpochs, LossConsumer lossConsumer, LoggingService mLoggingService) {
     checkNotTerminating();
 
     Log.e("DDFF", getTrainBatchSize() + "");
@@ -291,7 +293,13 @@ public final class TransferLearningModel implements Closeable {
               float totalLoss = 0;
               int numBatchesProcessed = 0;
 
+              if (mLoggingService != null)
+                mLoggingService.startEpoch((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())));
+
+              // Many batches in one epoch
+
               for (List<TrainingSample> batch : trainingBatches()) {
+
                 if (Thread.interrupted()) {
                   break epochLoop;
                 }
@@ -299,6 +307,11 @@ public final class TransferLearningModel implements Closeable {
                 trainingBatchClasses.put(zeroBatchClasses);
                 trainingBatchClasses.rewind();
                 zeroBatchClasses.rewind();
+
+                if (mLoggingService != null)
+                  mLoggingService.startBatch((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())));
+
+                String startForwardPass = (String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime()));
 
                 for (int sampleIdx = 0; sampleIdx < batch.size(); sampleIdx++) {
                   TrainingSample sample = batch.get(sampleIdx);
@@ -312,14 +325,25 @@ public final class TransferLearningModel implements Closeable {
                 }
                 trainingBatchBottlenecks.rewind();
 
+                String startBackwardPass = (String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime()));
+                // Before this could be FRWD pass
+                // if (mLoggingService != null)
+                //  mLoggingService.startBackwardPass((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())));
+
                 float loss =
                     trainHeadModel.calculateGradients(
                         trainingBatchBottlenecks,
                         trainingBatchClasses,
                         modelParameters,
                         modelGradients);
+
                 totalLoss += loss;
                 numBatchesProcessed++;
+
+                String startOptStep = (String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime()));
+                // Before this could be BKWD pass
+                //if (mLoggingService != null)
+                //  mLoggingService.startOptimizerStep((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())), loss);
 
                 optimizerModel.performStep(
                     modelParameters,
@@ -327,6 +351,12 @@ public final class TransferLearningModel implements Closeable {
                     optimizerState,
                     nextModelParameters,
                     nextOptimizerState);
+
+                String endOptStep = (String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime()));
+                // End of optimizer step
+                if (mLoggingService != null)
+                  mLoggingService.saveBatch(0,0,0,0, 0,
+                          startForwardPass, startBackwardPass, startOptStep, startOptStep, loss);
 
                 ByteBuffer[] swapBufferArray;
 
@@ -345,6 +375,10 @@ public final class TransferLearningModel implements Closeable {
                   parameterLock.writeLock().unlock();
                 }
               }
+
+              if (mLoggingService != null)
+                mLoggingService.stopEpoch((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())));
+
               float avgLoss = totalLoss / numBatchesProcessed;
               Log.e("Avg Loss", avgLoss +"");
               if (lossConsumer != null) {

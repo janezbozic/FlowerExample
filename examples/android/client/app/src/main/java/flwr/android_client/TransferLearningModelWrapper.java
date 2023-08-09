@@ -2,20 +2,18 @@ package flwr.android_client;
 
 import android.content.Context;
 import android.os.ConditionVariable;
-import android.os.Environment;
 import android.util.Pair;
 
 import java.io.Closeable;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.channels.GatheringByteChannel;
 import java.util.Arrays;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import org.tensorflow.lite.examples.transfer.api.AssetModelLoader;
+import org.tensorflow.lite.examples.transfer.api.LoggingService;
 import org.tensorflow.lite.examples.transfer.api.TransferLearningModel;
 import org.tensorflow.lite.examples.transfer.api.TransferLearningModel.LossConsumer;
 import org.tensorflow.lite.examples.transfer.api.TransferLearningModel.Prediction;
@@ -50,11 +48,11 @@ public class TransferLearningModelWrapper implements Closeable {
     }
 
 
-    public void train(int epochs){
+    public void train(int epochs, LoggingService mLoggingService){
         new Thread(() -> {
                 shouldTrain.block();
                 try {
-                    model.train(epochs, lossConsumer).get();
+                    model.train(epochs, lossConsumer, mLoggingService).get();
                 } catch (ExecutionException e) {
                     throw new RuntimeException("Exception occurred during model training", e.getCause());
                 } catch (InterruptedException e) {

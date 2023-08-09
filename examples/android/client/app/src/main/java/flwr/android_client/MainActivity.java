@@ -1,12 +1,16 @@
 package flwr.android_client;
 
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.icu.text.SimpleDateFormat;
 import android.os.Bundle;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.text.method.ScrollingMovementMethod;
@@ -26,143 +30,143 @@ import io.grpc.ManagedChannelBuilder;
 import  flwr.android_client.FlowerServiceGrpc.FlowerServiceStub;
 import com.google.protobuf.ByteString;
 
+import org.tensorflow.lite.examples.transfer.api.LoggingService;
+
 import io.grpc.stub.StreamObserver;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 
 public class MainActivity extends AppCompatActivity {
-    private EditText ip;
-    private EditText port;
-    private Button loadDataButton;
-    private Button connectButton;
-    private Button trainButton;
-    private TextView resultText;
-    private EditText device_id;
     private ManagedChannel channel;
     public FlowerClient fc;
     private static final String TAG = "Flower";
+
+    int DEVICE_ID = 1;
+
+    boolean isConnected;
+    boolean isLoaded;
+
+    boolean mBounded;
+    private static LoggingService mLoggingService;
+    private ServiceConnection mConnection;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        resultText = (TextView) findViewById(R.id.grpc_response_text);
-        resultText.setMovementMethod(new ScrollingMovementMethod());
-        device_id = (EditText) findViewById(R.id.device_id_edit_text);
-        ip = (EditText) findViewById(R.id.serverIP);
-        port = (EditText) findViewById(R.id.serverPort);
-        loadDataButton = (Button) findViewById(R.id.load_data) ;
-        connectButton = (Button) findViewById(R.id.connect);
-        trainButton = (Button) findViewById(R.id.trainFederated);
+
+         mConnection = new ServiceConnection() {
+             @Override
+             public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+                 Toast.makeText(MainActivity.this, "Service is connected", Toast.LENGTH_SHORT).show();
+                 mBounded = true;
+                 LoggingService.LocalBinder mLocalBinder = (LoggingService.LocalBinder)iBinder;
+                 mLoggingService = mLocalBinder.getLoggingServiceInstance();
+             }
+
+             @Override
+            public void onServiceDisconnected(ComponentName name) {
+                Toast.makeText(MainActivity.this, "Service is disconnected", Toast.LENGTH_SHORT).show();
+                mBounded = false;
+                mLoggingService = null;
+            }
+        };
 
         fc = new FlowerClient(this);
+
     }
 
-    public static void hideKeyboard(Activity activity) {
-        InputMethodManager imm = (InputMethodManager) activity.getSystemService(Activity.INPUT_METHOD_SERVICE);
-        View view = activity.getCurrentFocus();
-        if (view == null) {
-            view = new View(activity);
+    @Override
+    protected void onStart() {
+        super.onStart();
+
+        Intent mIntent = new Intent(this, LoggingService.class);
+        bindService(mIntent, mConnection, BIND_AUTO_CREATE);
+
+        isLoaded = false;
+        loadData();
+        while (!isLoaded){
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
         }
-        imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        isConnected = false;
+        connect();
+        while (!isConnected){
+            try {
+                TimeUnit.SECONDS.sleep(1);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        runGrpc();
+    };
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if(mBounded) {
+            unbindService(mConnection);
+            mBounded = false;
+        }
+    };
+
+    public void loadData(){
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        executor.execute(() -> {
+            try {
+                fc.loadData(DEVICE_ID);
+            } catch (Exception e) {
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                e.printStackTrace(pw);
+                pw.flush();
+            }
+            isLoaded = true;
+        });
     }
 
-
-    public void setResultText(String text) {
-        SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss", Locale.GERMANY);
-        String time = dateFormat.format(new Date());
-        resultText.append("\n" + time + "   " + text);
-    }
-
-    public void loadData(View view){
-        if (TextUtils.isEmpty(device_id.getText().toString())) {
-            Toast.makeText(this, "Please enter a client partition ID between 1 and 10 (inclusive)", Toast.LENGTH_LONG).show();
-        }
-        else if (Integer.parseInt(device_id.getText().toString()) > 10 ||  Integer.parseInt(device_id.getText().toString()) < 1)
-        {
-            Toast.makeText(this, "Please enter a client partition ID between 1 and 10 (inclusive)", Toast.LENGTH_LONG).show();
-        }
-        else{
-            hideKeyboard(this);
-            setResultText("Loading the local training dataset in memory. It will take several seconds.");
-            loadDataButton.setEnabled(false);
-
-            ExecutorService executor = Executors.newSingleThreadExecutor();
-            Handler handler = new Handler(Looper.getMainLooper());
-
-            executor.execute(new Runnable() {
-                private String result;
-                @Override
-                public void run() {
-                    try {
-                        fc.loadData(Integer.parseInt(device_id.getText().toString()));
-                        result =  "Training dataset is loaded in memory.";
-                    } catch (Exception e) {
-                        StringWriter sw = new StringWriter();
-                        PrintWriter pw = new PrintWriter(sw);
-                        e.printStackTrace(pw);
-                        pw.flush();
-                        result =  "Training dataset is loaded in memory.";
-                    }
-                    handler.post(() -> {
-                        setResultText(result);
-                        connectButton.setEnabled(true);
-                    });
-                }
-            });
-        }
-    }
-
-    public void connect(View view) {
-        String host = ip.getText().toString();
-        String portStr = port.getText().toString();
+    public void connect() {
+        String host = "10.0.2.2";
+        String portStr = "8080";
         if (TextUtils.isEmpty(host) || TextUtils.isEmpty(portStr) || !Patterns.IP_ADDRESS.matcher(host).matches()) {
             Toast.makeText(this, "Please enter the correct IP and port of the FL server", Toast.LENGTH_LONG).show();
         }
         else {
             int port = TextUtils.isEmpty(portStr) ? 0 : Integer.parseInt(portStr);
             channel = ManagedChannelBuilder.forAddress(host, port).maxInboundMessageSize(10 * 1024 * 1024).usePlaintext().build();
-            hideKeyboard(this);
-            trainButton.setEnabled(true);
-            connectButton.setEnabled(false);
-            setResultText("Channel object created. Ready to train!");
+            isConnected = true;
         }
     }
 
-    public void runGrpc(View view){
+    public void runGrpc(){
         MainActivity activity = this;
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        Handler handler = new Handler(Looper.getMainLooper());
 
-        executor.execute(new Runnable() {
-            private String result;
-            @Override
-            public void run() {
-                try {
-                    (new FlowerServiceRunnable()).run(FlowerServiceGrpc.newStub(channel), activity);
-                    result =  "Connection to the FL server successful \n";
-                } catch (Exception e) {
-                    StringWriter sw = new StringWriter();
-                    PrintWriter pw = new PrintWriter(sw);
-                    e.printStackTrace(pw);
-                    pw.flush();
-                    result = "Failed to connect to the FL server \n" + sw;
-                }
-                handler.post(() -> {
-                    setResultText(result);
-                    trainButton.setEnabled(false);
-                });
+        executor.execute(() -> {
+            try {
+                (new FlowerServiceRunnable()).run(FlowerServiceGrpc.newStub(channel), activity);
+            } catch (Exception e) {
+                StringWriter sw = new StringWriter();
+                PrintWriter pw = new PrintWriter(sw);
+                e.printStackTrace(pw);
+                pw.flush();
             }
         });
     }
@@ -211,13 +215,14 @@ public class MainActivity extends AppCompatActivity {
 
                 if (message.hasGetParametersIns()) {
                     Log.e(TAG, "Handling GetParameters");
-                    activity.setResultText("Handling GetParameters message from the server.");
 
                     weights = activity.fc.getWeights();
                     c = weightsAsProto(weights);
                 } else if (message.hasFitIns()) {
+
+                    mLoggingService.startRound((String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime())), 100);
+
                     Log.e(TAG, "Handling FitIns");
-                    activity.setResultText("Handling Fit request from the server.");
 
                     List<ByteString> layers = message.getFitIns().getParameters().getTensorsList();
 
@@ -232,11 +237,16 @@ public class MainActivity extends AppCompatActivity {
                         newWeights[i] = ByteBuffer.wrap(layers.get(i).toByteArray());
                     }
 
-                    Pair<ByteBuffer[], Integer> outputs = activity.fc.fit(newWeights, local_epochs);
+                    Pair<ByteBuffer[], Integer> outputs = activity.fc.fit(newWeights, local_epochs, mLoggingService);
                     c = fitResAsProto(outputs.first, outputs.second);
+
+                    String endTime = (String)(new SimpleDateFormat("yyyy/MM/dd_HH:mm:ss").format(Calendar.getInstance().getTime()));
+
+                    mLoggingService.endRound(endTime, 100);
+
                 } else if (message.hasEvaluateIns()) {
+
                     Log.e(TAG, "Handling EvaluateIns");
-                    activity.setResultText("Handling Evaluate request from the server");
 
                     List<ByteString> layers = message.getEvaluateIns().getParameters().getTensorsList();
 
@@ -249,12 +259,12 @@ public class MainActivity extends AppCompatActivity {
 
                     float loss = inference.first.first;
                     float accuracy = inference.first.second;
-                    activity.setResultText("Test Accuracy after this round = " + accuracy);
+                    mLoggingService.roundEvaluated(accuracy);
+                    Log.d("DELO", "accuracy: " + accuracy);
                     int test_size = inference.second;
                     c = evaluateResAsProto(loss, test_size);
                 }
                 requestObserver.onNext(c);
-                activity.setResultText("Response sent to the server");
             }
             catch (Exception e){
                 Log.e(TAG, e.getMessage());

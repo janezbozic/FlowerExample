@@ -84,7 +84,7 @@ public class ModelCorrectnessTest {
               NUM_EPOCHS,
               (epoch, loss) -> {
                 System.out.printf("Epoch %d: loss = %.5f\n", epoch, loss);
-              })
+              }, null)
           .get();
     } catch (ExecutionException e) {
       throw new RuntimeException(e.getCause());

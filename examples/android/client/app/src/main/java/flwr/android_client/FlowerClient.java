@@ -3,12 +3,13 @@ package flwr.android_client;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Canvas;
 import android.os.ConditionVariable;
 import android.util.Log;
 import android.util.Pair;
 
 import androidx.lifecycle.MutableLiveData;
+
+import org.tensorflow.lite.examples.transfer.api.LoggingService;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -35,12 +36,12 @@ public class FlowerClient {
         return tlModel.getParameters();
     }
 
-    public Pair<ByteBuffer[], Integer> fit(ByteBuffer[] weights, int epochs) {
+    public Pair<ByteBuffer[], Integer> fit(ByteBuffer[] weights, int epochs, LoggingService mLoggingService) {
 
         this.local_epochs = epochs;
         tlModel.updateParameters(weights);
         isTraining.close();
-        tlModel.train(this.local_epochs);
+        tlModel.train(this.local_epochs, mLoggingService);
         tlModel.enableTraining((epoch, loss) -> setLastLoss(epoch, loss));
         Log.e(TAG ,  "Training enabled. Local Epochs = " + this.local_epochs);
         isTraining.block();
